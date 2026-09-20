@@ -8,7 +8,7 @@ import com.github.kittinunf.fuel.json.responseJson
 /**
  * 基于 Alist 部署的「AI 有声书」听书源。
  *
- * 站点标准 API 路径为 $SITE/api/*，需要账号密码登录后访问。
+ * 站点标准 API 路径形如「$SITE/api/...」，需要账号密码登录后访问。
  *
  * 目录结构（已实测）：
  *   /otterhub/audio/有声书/AI有声书/      <- 各有声书文件夹（21 本）
