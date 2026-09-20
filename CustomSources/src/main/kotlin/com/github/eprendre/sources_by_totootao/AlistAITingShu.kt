@@ -208,30 +208,51 @@ object AlistAITingShu : TingShu() {
                 "注意：jar 内含明文账号密码，请勿发布到不可信环境。"
     }
 
-    // Alist 没有全局搜索 API，这里采用「列根目录 + 书名本地匹配」实现搜索
+    // Alist 的 /api/fs/search 需要存储驱动支持索引，实测本站会超时，
+    // 故采用「列根目录 + 书名本地匹配」实现搜索
     override fun isSearchable(): Boolean = true
 
     /**
      * 搜索：列出根目录下全部有声书（均为文件夹），按书名包含关键词过滤。
-     * 标准 Alist 无搜索接口，而本源只有 21 本、都在同一目录，本地过滤即可满足需求。
+     *
+     * 关键点（与官方源保持一致，否则搜索页会拿不到结果）：
+     * - 必须用 URLDecoder 还原关键词：app 传入的可能是 URL 编码后的字符串
+     * - 必须返回真实的最大页数，本地过滤一次性给全，故 totalPage 固定为 1
+     * - Book 的 title 不能为空，否则列表项无法渲染
      */
     override fun search(keywords: String, page: Int): Pair<List<Book>, Int> {
         return try {
+            // app 可能传入 URL 编码过的关键词，先尝试还原（还原失败则用原串）
+            val decoded = try {
+                java.net.URLDecoder.decode(keywords, "UTF-8")
+            } catch (e: Exception) {
+                keywords
+            }
+            val kw = decoded.trim().lowercase()
+
             val items = listFiles(ROOT_PATH).filter { it.isDir }
-            val kw = keywords.lowercase()
+            val matched = if (kw.isEmpty()) items else items.filter { it.name.lowercase().contains(kw) }
+
             val list = ArrayList<Book>()
-            items.filter { it.name.lowercase().contains(kw) }
-                .forEach { item ->
-                    list.add(
-                        Book(item.thumb, item.path, item.name, "", "").apply {
-                            this.sourceId = getSourceId()
-                        }
-                    )
-                }
+            matched.forEach { item ->
+                list.add(
+                    Book(
+                        coverUrl = item.thumb,
+                        bookUrl = item.path,
+                        title = item.name,
+                        author = "",
+                        artist = ""
+                    ).apply {
+                        this.sourceId = getSourceId()
+                        this.intro = "AI 有声书 · ${item.name}"
+                    }
+                )
+            }
+            // 本地过滤结果一次给全，没有下一页
             Pair(list, 1)
         } catch (e: Exception) {
             val msg = "⚠️搜索失败：${e.javaClass.simpleName}：${e.message ?: "未知错误"}"
-            Pair(arrayListOf(Book("", "", msg, "", "")), 1)
+            Pair(arrayListOf(Book("", "", msg, "", "").apply { this.sourceId = getSourceId() }), 1)
         }
     }
 
