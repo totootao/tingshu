@@ -44,7 +44,8 @@ object AlistAITingShu : TingShu() {
         val path: String,
         val isDir: Boolean,
         val thumb: String,
-        val size: Long
+        val size: Long,
+        val type: Int = 0
     )
 
     /**
@@ -128,7 +129,8 @@ object AlistAITingShu : TingShu() {
                     path = item.optString("path", ""),
                     isDir = item.optBoolean("is_dir", false),
                     thumb = item.optString("thumb", ""),
-                    size = item.optLong("size", 0L)
+                    size = item.optLong("size", 0L),
+                    type = item.optInt("type", 0)
                 )
             )
         }
@@ -247,13 +249,26 @@ object AlistAITingShu : TingShu() {
                 // 优先用文件夹内第一张图片做封面
                 val cover = items.firstOrNull { !it.isDir && it.name.substringAfterLast('.').lowercase() in IMAGE_EXT }
                 coverUrl = cover?.thumb ?: ""
-                items.filter { !it.isDir }
-                    .filter { it.name.substringAfterLast('.').lowercase() in AUDIO_EXT }
-                    .sortedBy { it.name }   // Alist 返回乱序，必须按文件名排序（文件名以 0 填充序号开头）
-                    .forEach { item ->
-                        val title = item.name.substringBeforeLast('.')  // 去掉扩展名，标题更干净
-                        episodes.add(Episode(title, item.path))
-                    }
+
+                // Alist 的 type=3 表示音频；同时兜底用扩展名判断
+                val audioItems = items.filter { !it.isDir }
+                    .filter { it.type == 3 || it.name.substringAfterLast('.').lowercase() in AUDIO_EXT }
+                    .sortedBy { it.name }
+
+                audioItems.forEach { item ->
+                    val title = item.name.substringBeforeLast('.')  // 去掉扩展名，标题更干净
+                    episodes.add(Episode(title, item.path))
+                }
+
+                // 如果识别不到音频，把目录内容快照返回给用户，便于排错
+                if (episodes.isEmpty()) {
+                    val summary = items.take(5).joinToString { "${it.name}(dir=${it.isDir},type=${it.type})" }
+                    val total = items.size
+                    return BookDetail(
+                        emptyList(),
+                        intro = "⚠️未识别到音频文件（共 $total 项）。前 5 项：$summary"
+                    )
+                }
             }
             BookDetail(episodes, coverUrl = coverUrl)
         } catch (e: Exception) {
