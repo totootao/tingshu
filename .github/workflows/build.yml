@@ -25,12 +25,18 @@ jobs:
         working-directory: CustomSources
         run: chmod +x ./gradlew
 
-      - name: Build jar (含 dex 转换)
+      - name: Build jar (Kotlin compile only)
         working-directory: CustomSources
-        run: ./gradlew jar --no-daemon
+        run: |
+          ./gradlew jar -x dexTask --console=plain --no-daemon > /tmp/build.log 2>&1
 
-      - name: Show build outputs
-        run: ls -la CustomSources/build/libs/
+      - name: Dex (convert to Android dex)
+        working-directory: CustomSources
+        run: |
+          JAR=$(ls build/libs/*.jar | head -1)
+          echo "input jar: $JAR"
+          ../dx/d8 --output build/libs/sources_by_totootao.jar "$JAR" 2>&1 | tee /tmp/dex.log
+          ls -la build/libs/
 
       - name: Generate subscription.json
         run: |
@@ -56,3 +62,11 @@ jobs:
           overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Diagnose failure (post logs to commit comment)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          { echo "=== build.log ==="; cat /tmp/build.log; echo; echo "=== dex.log ==="; cat /tmp/dex.log 2>/dev/null; } > /tmp/full.log
+          gh api repos/totootao/tingshu/commits/${{ github.sha }}/comments -F body=@/tmp/full.log
