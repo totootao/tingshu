@@ -14,7 +14,12 @@ import kotlin.text.Charsets
  * 目录结构（已实测）：
  *   /otterhub/audio/有声书/AI有声书/      <- 各有声书文件夹（21 本）
  *       书名/                            <- 每本书是一个文件夹
- *           xxxx书名·第xxxx章·xxx.mp3     <- 音频文件（type=3，已验证全为 mp3）
+ *           xxxx书名·第xxxx章·xxx.mp3     <- 音频/视频文件（type=2/3）
+ *
+ * 支持的媒体格式：
+ *   音频：mp3 m4a flac wav aac ogg wma ape opus mka mp2 amr mid midi
+ *   视频：mp4 mkv avi mov webm flv m3u8 ts wmv rm rmvb mpg mpeg 3gp
+ *   识别优先看 Alist 的 type 字段（2=视频、3=音频），扩展名为兜底。
  *
  * 注意：本文件中的站点地址、账号密码均为明文，请勿发布到不可信环境。
  */
@@ -34,8 +39,10 @@ object AlistAITingShu : TingShu() {
     private const val ROOT_PATH = "/otterhub/audio/有声书/AI有声书"
 
     private const val PER_PAGE = 1000
-    private val AUDIO_EXT = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "wma", "ape", "opus", "mka")
-    private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp")
+    private val AUDIO_EXT = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "wma", "ape", "opus", "mka", "mp2", "amr", "mid", "midi")
+    private val VIDEO_EXT = setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "m3u8", "ts", "wmv", "rm", "rmvb", "mpg", "mpeg", "3gp")
+    private val MEDIA_EXT = AUDIO_EXT + VIDEO_EXT
+    private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
 
     private var token: String = ""
 
@@ -250,23 +257,27 @@ object AlistAITingShu : TingShu() {
                 val cover = items.firstOrNull { !it.isDir && it.name.substringAfterLast('.').lowercase() in IMAGE_EXT }
                 coverUrl = cover?.thumb ?: ""
 
-                // Alist 的 type=3 表示音频；同时兜底用扩展名判断
-                val audioItems = items.filter { !it.isDir }
-                    .filter { it.type == 3 || it.name.substringAfterLast('.').lowercase() in AUDIO_EXT }
+                // Alist 的 type=2 表示视频、type=3 表示音频；同时兜底用扩展名判断，
+                // 这样无论 Alist 是否返回准确的 type，都能覆盖所有音频/视频格式。
+                val mediaItems = items.filter { !it.isDir }
+                    .filter {
+                        it.type == 2 || it.type == 3 ||
+                            it.name.substringAfterLast('.').lowercase() in MEDIA_EXT
+                    }
                     .sortedBy { it.name }
 
-                audioItems.forEach { item ->
+                mediaItems.forEach { item ->
                     val title = item.name.substringBeforeLast('.')  // 去掉扩展名，标题更干净
                     episodes.add(Episode(title, item.path))
                 }
 
-                // 如果识别不到音频，把目录内容快照返回给用户，便于排错
+                // 如果识别不到音视频，把目录内容快照返回给用户，便于排错
                 if (episodes.isEmpty()) {
                     val summary = items.take(5).joinToString { "${it.name}(dir=${it.isDir},type=${it.type})" }
                     val total = items.size
                     return BookDetail(
                         emptyList(),
-                        intro = "⚠️未识别到音频文件（共 $total 项）。前 5 项：$summary"
+                        intro = "⚠️未识别到音视频文件（共 $total 项）。前 5 项：$summary"
                     )
                 }
             }
