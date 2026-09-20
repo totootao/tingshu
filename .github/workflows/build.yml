@@ -53,7 +53,7 @@ jobs:
           {
               "version": ${{ github.run_number }},
               "entry_package": "sources_by_totootao",
-              "download_url": "https://ghproxy.totootao.top/https://github.com/totootao/tingshu/releases/latest/download/sources_by_totootao.jar",
+              "download_url": "https://ghproxy.totootao.top/https://github.com/totootao/tingshu/releases/latest/download/sources_by_totootao.jar?v=${{ github.run_number }}",
               "update_msg": "CI 自动构建 ${{ github.sha }}",
               "support_url": ""
           }
