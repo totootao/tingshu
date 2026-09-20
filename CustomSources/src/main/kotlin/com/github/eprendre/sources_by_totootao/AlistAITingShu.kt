@@ -4,6 +4,7 @@ import com.github.eprendre.tingshu.sources.*
 import com.github.eprendre.tingshu.utils.*
 import com.github.kittinunf.fuel.Fuel
 import com.github.kittinunf.fuel.json.responseJson
+import kotlin.text.Charsets
 
 /**
  * 基于 Alist 部署的「AI 有声书」听书源。
@@ -55,7 +56,10 @@ object AlistAITingShu : TingShu() {
         val body = """{"username":"$USERNAME","password":"$PASSWORD"}"""
         val (_, _, result) = Fuel.post(url)
             .header("Content-Type", "application/json")
-            .body(body)
+            // 关键：Fuel 的 body(String) 默认会把 Content-Type 覆盖成 text/plain，
+            // 而 Alist(gin) 的 ShouldBindJSON 严格要求 application/json，否则返回 400。
+            // 故必须显式以 application/json 发送，且用 UTF-8 避免中文路径乱码。
+            .body(body.toByteArray(Charsets.UTF_8), "application/json")
             .responseJson()
         val json = result.get().obj()
         token = json.getJSONObject("data").getString("token")
@@ -81,7 +85,7 @@ object AlistAITingShu : TingShu() {
         val (_, _, result) = Fuel.post(url)
             .header("Authorization", tk)
             .header("Content-Type", "application/json")
-            .body(body)
+            .body(body.toByteArray(Charsets.UTF_8), "application/json")
             .responseJson()
         val json = result.get().obj()
         val arr = json.getJSONObject("data").getJSONArray("content")
@@ -120,7 +124,7 @@ object AlistAITingShu : TingShu() {
         val (_, _, result) = Fuel.post(url)
             .header("Authorization", tk)
             .header("Content-Type", "application/json")
-            .body(body)
+            .body(body.toByteArray(Charsets.UTF_8), "application/json")
             .responseJson()
         val json = result.get().obj()
         val data = json.getJSONObject("data")
@@ -156,18 +160,23 @@ object AlistAITingShu : TingShu() {
      * 标准 Alist 无搜索接口，而本源只有 21 本、都在同一目录，本地过滤即可满足需求。
      */
     override fun search(keywords: String, page: Int): Pair<List<Book>, Int> {
-        val items = listFiles(ROOT_PATH).filter { it.isDir }
-        val kw = keywords.lowercase()
-        val list = ArrayList<Book>()
-        items.filter { it.name.lowercase().contains(kw) }
-            .forEach { item ->
-                list.add(
-                    Book(item.thumb, item.path, item.name, "", "").apply {
-                        this.sourceId = getSourceId()
-                    }
-                )
-            }
-        return Pair(list, 1)
+        return try {
+            val items = listFiles(ROOT_PATH).filter { it.isDir }
+            val kw = keywords.lowercase()
+            val list = ArrayList<Book>()
+            items.filter { it.name.lowercase().contains(kw) }
+                .forEach { item ->
+                    list.add(
+                        Book(item.thumb, item.path, item.name, "", "").apply {
+                            this.sourceId = getSourceId()
+                        }
+                    )
+                }
+            Pair(list, 1)
+        } catch (e: Exception) {
+            val msg = "⚠️搜索失败：${e.javaClass.simpleName}：${e.message ?: "未知错误"}"
+            Pair(arrayListOf(Book("", "", msg, "", "")), 1)
+        }
     }
 
     // 全部走 Fuel HTTP 请求，不需要 WebView，手表等设备也能用
@@ -186,35 +195,45 @@ object AlistAITingShu : TingShu() {
     }
 
     override fun getCategoryList(url: String): Category {
-        val items = listFiles(url).filter { it.isDir }
-        val list = ArrayList<Book>()
-        items.forEach { item ->
-            list.add(
-                Book(item.thumb, item.path, item.name, "", "").apply {
-                    this.sourceId = getSourceId()
-                }
-            )
+        return try {
+            val items = listFiles(url).filter { it.isDir }
+            val list = ArrayList<Book>()
+            items.forEach { item ->
+                list.add(
+                    Book(item.thumb, item.path, item.name, "", "").apply {
+                        this.sourceId = getSourceId()
+                    }
+                )
+            }
+            Category(list, 1, 1, url, "")
+        } catch (e: Exception) {
+            // 让加载失败的原因可见，便于排查（而不是一片空白）
+            val msg = "⚠️加载失败：${e.javaClass.simpleName}：${e.message ?: "未知错误"}"
+            Category(arrayListOf(Book("", "", msg, "", "")), 1, 1, url, "")
         }
-        return Category(list, 1, 1, url, "")
     }
 
     override fun getBookDetailInfo(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
-        val episodes = ArrayList<Episode>()
-        var coverUrl = ""
-        if (loadEpisodes) {
-            val items = listFiles(bookUrl)
-            // 优先用文件夹内第一张图片做封面
-            val cover = items.firstOrNull { !it.isDir && it.name.substringAfterLast('.').lowercase() in IMAGE_EXT }
-            coverUrl = cover?.thumb ?: ""
-            items.filter { !it.isDir }
-                .filter { it.name.substringAfterLast('.').lowercase() in AUDIO_EXT }
-                .sortedBy { it.name }   // Alist 返回乱序，必须按文件名排序（文件名以 0 填充序号开头）
-                .forEach { item ->
-                    val title = item.name.substringBeforeLast('.')  // 去掉扩展名，标题更干净
-                    episodes.add(Episode(title, item.path))
-                }
+        return try {
+            val episodes = ArrayList<Episode>()
+            var coverUrl = ""
+            if (loadEpisodes) {
+                val items = listFiles(bookUrl)
+                // 优先用文件夹内第一张图片做封面
+                val cover = items.firstOrNull { !it.isDir && it.name.substringAfterLast('.').lowercase() in IMAGE_EXT }
+                coverUrl = cover?.thumb ?: ""
+                items.filter { !it.isDir }
+                    .filter { it.name.substringAfterLast('.').lowercase() in AUDIO_EXT }
+                    .sortedBy { it.name }   // Alist 返回乱序，必须按文件名排序（文件名以 0 填充序号开头）
+                    .forEach { item ->
+                        val title = item.name.substringBeforeLast('.')  // 去掉扩展名，标题更干净
+                        episodes.add(Episode(title, item.path))
+                    }
+            }
+            BookDetail(episodes, coverUrl = coverUrl)
+        } catch (e: Exception) {
+            BookDetail(emptyList(), intro = "⚠️详情加载失败：${e.javaClass.simpleName}：${e.message ?: "未知错误"}")
         }
-        return BookDetail(episodes, coverUrl = coverUrl)
     }
 
     override fun getAudioUrlExtractor(): AudioUrlExtractor {
