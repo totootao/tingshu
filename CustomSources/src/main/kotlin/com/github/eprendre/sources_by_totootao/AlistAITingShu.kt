@@ -44,6 +44,11 @@ object AlistAITingShu : TingShu() {
     private val MEDIA_EXT = AUDIO_EXT + VIDEO_EXT
     private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
 
+    /** Alist 的 type：2=视频，3=音频，1=文件夹 */
+    private const val ALIST_TYPE_DIR = 1
+    private const val ALIST_TYPE_VIDEO = 2
+    private const val ALIST_TYPE_AUDIO = 3
+
     private var token: String = ""
 
     private data class AlistItem(
@@ -118,28 +123,51 @@ object AlistAITingShu : TingShu() {
         }
     }
 
+    /**
+     * 列出目录内容。
+     *
+     * 注意：Alist 的 /api/fs/list 返回项里「没有 path 字段」，
+     * 必须由调用方用「父路径 + / + name」自行拼接完整路径，
+     * 否则传给 /api/fs/get 的 path 为空，拿不到音频直链。
+     */
     private fun doList(path: String): List<AlistItem> {
         val tk = ensureToken()
-        val url = "$API/fs/list"
-        val body = """{"path":"$path","password":"","page":1,"per_page":$PER_PAGE,"refresh":false}"""
-        val json = postJson(url, body, tk)
-        val dataObj = json.optJSONObject("data")
-            ?: throw RuntimeException("Alist /api/fs/list 返回无 data 字段：$json")
-        val arr = dataObj.optJSONArray("content")
-            ?: throw RuntimeException("Alist /api/fs/list 返回无 content 字段：$json")
+        val base = path.trimEnd('/')
         val list = ArrayList<AlistItem>()
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i)
-            list.add(
-                AlistItem(
-                    name = item.optString("name", ""),
-                    path = item.optString("path", ""),
-                    isDir = item.optBoolean("is_dir", false),
-                    thumb = item.optString("thumb", ""),
-                    size = item.optLong("size", 0L),
-                    type = item.optInt("type", 0)
-                )
+        var page = 1
+        while (true) {
+            val json = postJson(
+                "$API/fs/list",
+                """{"path":"$path","password":"","page":$page,"per_page":$PER_PAGE,"refresh":false}""",
+                tk
             )
+            val dataObj = json.optJSONObject("data")
+                ?: throw RuntimeException("Alist /api/fs/list 返回无 data 字段：$json")
+            val arr = dataObj.optJSONArray("content")
+                ?: throw RuntimeException("Alist /api/fs/list 返回无 content 字段：$json")
+
+            for (i in 0 until arr.length()) {
+                val item = arr.getJSONObject(i)
+                val name = item.optString("name", "")
+                // 服务端若返回了 path 就用，否则用 父路径/文件名 拼接
+                val rawPath = item.optString("path", "")
+                val fullPath = if (rawPath.isNotEmpty()) rawPath else "$base/$name"
+                list.add(
+                    AlistItem(
+                        name = name,
+                        path = fullPath,
+                        isDir = item.optBoolean("is_dir", false),
+                        thumb = item.optString("thumb", ""),
+                        size = item.optLong("size", 0L),
+                        type = item.optInt("type", 0)
+                    )
+                )
+            }
+
+            // 一本书可能有 2000+ 集，单页装不下，必须按 total 继续翻页，否则会丢章节
+            val total = dataObj.optLong("total", 0L)
+            if (arr.length() < PER_PAGE || list.size >= total || arr.length() == 0) break
+            page++
         }
         return list
     }
@@ -261,7 +289,7 @@ object AlistAITingShu : TingShu() {
                 // 这样无论 Alist 是否返回准确的 type，都能覆盖所有音频/视频格式。
                 val mediaItems = items.filter { !it.isDir }
                     .filter {
-                        it.type == 2 || it.type == 3 ||
+                        it.type == ALIST_TYPE_VIDEO || it.type == ALIST_TYPE_AUDIO ||
                             it.name.substringAfterLast('.').lowercase() in MEDIA_EXT
                     }
                     .sortedBy { it.name }
