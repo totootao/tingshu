@@ -1,0 +1,58 @@
+name: Build & Release Tingshu Sources
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 18
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '18'
+
+      - name: Make gradlew executable
+        working-directory: CustomSources
+        run: chmod +x ./gradlew
+
+      - name: Build jar (含 dex 转换)
+        working-directory: CustomSources
+        run: ./gradlew jar --no-daemon
+
+      - name: Show build outputs
+        run: ls -la CustomSources/build/libs/
+
+      - name: Generate subscription.json
+        run: |
+          cat > subscription.json <<EOF
+          {
+              "version": ${{ github.run_number }},
+              "entry_package": "sources_by_totootao",
+              "download_url": "https://ghproxy.totootao.top/https://github.com/totootao/tingshu/releases/latest/download/sources_by_totootao.jar",
+              "update_msg": "CI 自动构建 ${{ github.sha }}",
+              "support_url": ""
+          }
+          EOF
+          cat subscription.json
+
+      - name: Publish to Release (latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: sources_by_totootao (auto build)
+          files: |
+            CustomSources/build/libs/sources_by_totootao.jar
+            subscription.json
+          overwrite: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
