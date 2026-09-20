@@ -3,7 +3,7 @@ package com.github.eprendre.sources_by_totootao
 import com.github.eprendre.tingshu.sources.*
 import com.github.eprendre.tingshu.utils.*
 import com.github.kittinunf.fuel.Fuel
-import com.github.kittinunf.fuel.json.responseJson
+import org.json.JSONObject
 import kotlin.text.Charsets
 
 /**
@@ -48,20 +48,52 @@ object AlistAITingShu : TingShu() {
     )
 
     /**
+     * 统一 POST 请求：先按字符串取响应，再手动转 JSON，失败时把状态码和响应原文抛出来，方便排错。
+     */
+    private fun postJson(
+        url: String,
+        body: String,
+        authToken: String = ""
+    ): JSONObject {
+        val headers = mutableMapOf("Content-Type" to "application/json")
+        if (authToken.isNotEmpty()) {
+            headers["Authorization"] = authToken
+        }
+
+        val (request, response, result) = Fuel.post(url)
+            .header(headers)
+            .body(body.toByteArray(Charsets.UTF_8))
+            .responseString()
+
+        val text = result.get()
+        val status = response.statusCode
+        if (status < 200 || status >= 300) {
+            throw RuntimeException("HTTP $status @ $url : ${text.take(300)}")
+        }
+        if (text.isBlank()) {
+            throw RuntimeException("HTTP $status @ $url 返回空响应体")
+        }
+        val json = try {
+            JSONObject(text)
+        } catch (e: Exception) {
+            throw RuntimeException("JSON 解析失败 @ $url : ${text.take(300)}")
+        }
+        val code = json.optInt("code", 200)
+        if (code != 200) {
+            val msg = json.optString("message", "未知错误")
+            throw RuntimeException("Alist 错误 code=$code message=$msg @ $url")
+        }
+        return json
+    }
+
+    /**
      * 登录获取 token（缓存复用）。
      */
     private fun ensureToken(): String {
         if (token.isNotEmpty()) return token
         val url = "$API/auth/login"
         val body = """{"username":"$USERNAME","password":"$PASSWORD"}"""
-        val (_, _, result) = Fuel.post(url)
-            // 关键：Fuel 的 body(String) 默认会把 Content-Type 覆盖成 text/plain，
-            // 而 Alist(gin) 的 ShouldBindJSON 严格要求 application/json，否则返回 400。
-            // 故先写无类型的 byte[] body，再强制 Content-Type 为 application/json，并用 UTF-8。
-            .body(body.toByteArray(Charsets.UTF_8))
-            .header("Content-Type" to "application/json")
-            .responseJson()
-        val json = result.get().obj()
+        val json = postJson(url, body)
         token = json.getJSONObject("data").getString("token")
         return token
     }
@@ -82,21 +114,19 @@ object AlistAITingShu : TingShu() {
         val tk = ensureToken()
         val url = "$API/fs/list"
         val body = """{"path":"$path","password":"","page":1,"per_page":$PER_PAGE,"refresh":false}"""
-        val (_, _, result) = Fuel.post(url)
-            .header("Authorization" to tk)
-            .body(body.toByteArray(Charsets.UTF_8))
-            .header("Content-Type" to "application/json")
-            .responseJson()
-        val json = result.get().obj()
-        val arr = json.getJSONObject("data").getJSONArray("content")
+        val json = postJson(url, body, tk)
+        val dataObj = json.optJSONObject("data")
+            ?: throw RuntimeException("Alist /api/fs/list 返回无 data 字段：$json")
+        val arr = dataObj.optJSONArray("content")
+            ?: throw RuntimeException("Alist /api/fs/list 返回无 content 字段：$json")
         val list = ArrayList<AlistItem>()
         for (i in 0 until arr.length()) {
             val item = arr.getJSONObject(i)
             list.add(
                 AlistItem(
-                    name = item.getString("name"),
-                    path = item.getString("path"),
-                    isDir = item.getBoolean("is_dir"),
+                    name = item.optString("name", ""),
+                    path = item.optString("path", ""),
+                    isDir = item.optBoolean("is_dir", false),
                     thumb = item.optString("thumb", ""),
                     size = item.optLong("size", 0L)
                 )
@@ -121,12 +151,7 @@ object AlistAITingShu : TingShu() {
         val tk = ensureToken()
         val url = "$API/fs/get"
         val body = """{"path":"$path","password":""}"""
-        val (_, _, result) = Fuel.post(url)
-            .header("Authorization" to tk)
-            .body(body.toByteArray(Charsets.UTF_8))
-            .header("Content-Type" to "application/json")
-            .responseJson()
-        val json = result.get().obj()
+        val json = postJson(url, body, tk)
         val data = json.getJSONObject("data")
         return if (data.optString("raw_url", "").isNotEmpty()) {
             data.getString("raw_url")
