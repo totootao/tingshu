@@ -148,12 +148,26 @@ object AlistAITingShu : TingShu() {
                 "注意：jar 内含明文账号密码，请勿发布到不可信环境。"
     }
 
-    // 标准 Alist 无内置搜索 API，用发现页浏览即可
-    override fun isSearchable(): Boolean = false
+    // Alist 没有全局搜索 API，这里采用「列根目录 + 书名本地匹配」实现搜索
+    override fun isSearchable(): Boolean = true
 
-    // 不可搜索，返回空结果（抽象方法必须实现，即使不启用搜索）
+    /**
+     * 搜索：列出根目录下全部有声书（均为文件夹），按书名包含关键词过滤。
+     * 标准 Alist 无搜索接口，而本源只有 21 本、都在同一目录，本地过滤即可满足需求。
+     */
     override fun search(keywords: String, page: Int): Pair<List<Book>, Int> {
-        return Pair(emptyList(), 1)
+        val items = listFiles(ROOT_PATH).filter { it.isDir }
+        val kw = keywords.lowercase()
+        val list = ArrayList<Book>()
+        items.filter { it.name.lowercase().contains(kw) }
+            .forEach { item ->
+                list.add(
+                    Book(item.thumb, item.path, item.name, "", "").apply {
+                        this.sourceId = getSourceId()
+                    }
+                )
+            }
+        return Pair(list, 1)
     }
 
     // 全部走 Fuel HTTP 请求，不需要 WebView，手表等设备也能用
