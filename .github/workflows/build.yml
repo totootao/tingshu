@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# 需要配置的 Repository secrets：
+#   ALIST_SITE        如 https://www.example.com/alist      （不要以 / 结尾）
+#   ALIST_USERNAME    Alist 登录用户名
+#   ALIST_PASSWORD    Alist 登录密码
+#   ALIST_ROOT_PATH   有声书根目录，如 /otterhub/audio/有声书/AI有声书
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,6 +30,48 @@ jobs:
         working-directory: CustomSources
         run: chmod +x ./gradlew
 
+      # 把源码中的 __ALIST_*__ 占位符替换为 GitHub Repository secrets，
+      # 这样仓库里永远不出现明文凭据；替换只发生在 CI 工作区，不会提交回仓库。
+      - name: Inject credentials from secrets
+        env:
+          ALIST_SITE: ${{ secrets.ALIST_SITE }}
+          ALIST_USERNAME: ${{ secrets.ALIST_USERNAME }}
+          ALIST_PASSWORD: ${{ secrets.ALIST_PASSWORD }}
+          ALIST_ROOT_PATH: ${{ secrets.ALIST_ROOT_PATH }}
+        run: |
+          SRC="CustomSources/src/main/kotlin/com/github/eprendre/sources_by_totootao/AlistAITingShu.kt"
+
+          # 缺少必填 secret 时直接失败，避免打出一个空白凭据的包
+          : "${ALIST_SITE:?缺少 secret ALIST_SITE}"
+          : "${ALIST_USERNAME:?缺少 secret ALIST_USERNAME}"
+          : "${ALIST_PASSWORD:?缺少 secret ALIST_PASSWORD}"
+          : "${ALIST_ROOT_PATH:?缺少 secret ALIST_ROOT_PATH}"
+
+          # 用 python 做替换，避免密码里的 / & 等字符干扰 sed
+          python3 - "$SRC" <<'PY'
+          import os, sys
+          p = sys.argv[1]
+          s = open(p, encoding='utf-8').read()
+          mapping = {
+              '__ALIST_SITE__':      os.environ['ALIST_SITE'],
+              '__ALIST_USERNAME__':  os.environ['ALIST_USERNAME'],
+              '__ALIST_PASSWORD__':  os.environ['ALIST_PASSWORD'],
+              '__ALIST_ROOT_PATH__': os.environ['ALIST_ROOT_PATH'],
+          }
+          for k, v in mapping.items():
+              s = s.replace(k, v)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('已注入占位符:', ', '.join(mapping.keys()))
+          PY
+
+          # 确认没有残留占位符（只打印名字，不泄露值）
+          if grep -q '__ALIST_[A-Z_]*__' "$SRC"; then
+            echo "::error::源码中仍有未替换的占位符"
+            grep -o '__ALIST_[A-Z_]*__' "$SRC" | sort -u
+            exit 1
+          fi
+          echo "凭据注入完成（SITE/USERNAME/PASSWORD/ROOT_PATH）"
+
       - name: Build jar
         id: build
         working-directory: CustomSources
@@ -38,6 +85,8 @@ jobs:
           cp CustomSources/build.log ci-logs/build.log 2>/dev/null || echo "no build.log" > ci-logs/build.log
           git config user.email "totootao@qq.com"
           git config user.name "totootao"
+          # 安全兜底：绝不把注入过凭据的源文件提交回去
+          git reset -- CustomSources/src 2>/dev/null || true
           git add -f ci-logs/
           git commit -m "ci: build log (run ${{ github.run_number }})" || echo "nothing to commit"
           git push origin HEAD:ci-logs --force || echo "push failed"

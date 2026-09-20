@@ -21,22 +21,26 @@ import kotlin.text.Charsets
  *   视频：mp4 mkv avi mov webm flv m3u8 ts wmv rm rmvb mpg mpeg 3gp
  *   识别优先看 Alist 的 type 字段（2=视频、3=音频），扩展名为兜底。
  *
- * 注意：本文件中的站点地址、账号密码均为明文，请勿发布到不可信环境。
+ * 凭据管理：
+ *   站点地址、账号、密码均以 __PLACEHOLDER__ 形式占位，
+ *   由 CI 在构建前用 GitHub Repository secrets 替换（见 .github/workflows/build.yml）。
+ *   仓库中不会出现任何明文凭据。
  */
 object AlistAITingShu : TingShu() {
 
-    private const val SITE = "https://www.totootao.top/alist"
+    // 以下三项在构建时由 CI 注入（secrets: ALIST_SITE / ALIST_USERNAME / ALIST_PASSWORD）
+    private const val SITE = "__ALIST_SITE__"
     private const val API = "$SITE/api"
 
-    private const val USERNAME = "totootao"
-    private const val PASSWORD = "Hhangxing963."
+    private const val USERNAME = "__ALIST_USERNAME__"
+    private const val PASSWORD = "__ALIST_PASSWORD__"
 
     /**
      * Alist 内部路径（不含站点前缀）。
      * 若你访问的 URL 整体都是 Alist 路径（例如根路径就是 /alist），则应改为：
      *   "/alist/otterhub/audio/有声书/AI有声书"
      */
-    private const val ROOT_PATH = "/otterhub/audio/有声书/AI有声书"
+    private const val ROOT_PATH = "__ALIST_ROOT_PATH__"
 
     private const val PER_PAGE = 1000
     private val AUDIO_EXT = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "wma", "ape", "opus", "mka", "mp2", "amr", "mid", "midi")
