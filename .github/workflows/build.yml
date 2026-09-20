@@ -26,19 +26,42 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build jar (Kotlin compile only)
+        id: build
+        continue-on-error: true
         working-directory: CustomSources
         run: |
-          ./gradlew jar -x dexTask --console=plain --no-daemon > /tmp/build.log 2>&1
+          ./gradlew jar -x dexTask --console=plain --no-daemon --stacktrace 2>&1 | tee build.log
+          echo "BUILD_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          if [ -f build/libs/*.jar ]; then
+            JAR=$(ls build/libs/*.jar | head -1)
+            echo "JAR=$JAR" >> "$GITHUB_ENV"
+            ../dx/d8 --output build/libs/sources_by_totootao.jar "$JAR" 2>&1 | tee dex.log
+            echo "DEX_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish logs on failure
+        if: ${{ env.BUILD_EXIT != '0' }}
+        run: |
+          mkdir -p ci-logs
+          cp CustomSources/build.log ci-logs/build.log 2>/dev/null || echo "no build.log" > ci-logs/build.log
+          cp CustomSources/dex.log ci-logs/dex.log 2>/dev/null || true
+          git config user.email "totootao@qq.com"
+          git config user.name "totootao"
+          git add -f ci-logs/
+          git commit -m "ci: build log (run ${{ github.run_number }})" || echo "nothing to commit"
+          git push origin HEAD:ci-logs --force || echo "push failed"
 
       - name: Dex (convert to Android dex)
+        if: ${{ env.BUILD_EXIT == '0' }}
         working-directory: CustomSources
         run: |
           JAR=$(ls build/libs/*.jar | head -1)
           echo "input jar: $JAR"
-          ../dx/d8 --output build/libs/sources_by_totootao.jar "$JAR" 2>&1 | tee /tmp/dex.log
+          ../dx/d8 --output build/libs/sources_by_totootao.jar "$JAR" 2>&1 | tee dex.log
           ls -la build/libs/
 
       - name: Generate subscription.json
+        if: ${{ env.BUILD_EXIT == '0' }}
         run: |
           cat > subscription.json <<EOF
           {
@@ -52,6 +75,7 @@ jobs:
           cat subscription.json
 
       - name: Publish to Release (latest)
+        if: ${{ env.BUILD_EXIT == '0' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -62,11 +86,3 @@ jobs:
           overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Diagnose failure (post logs to commit comment)
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          { echo "=== build.log ==="; cat /tmp/build.log; echo; echo "=== dex.log ==="; cat /tmp/dex.log 2>/dev/null; } > /tmp/full.log
-          gh api repos/totootao/tingshu/commits/${{ github.sha }}/comments -F body=@/tmp/full.log
