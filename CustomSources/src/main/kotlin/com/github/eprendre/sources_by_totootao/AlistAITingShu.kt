@@ -173,7 +173,11 @@ object AlistAITingShu : TingShu() {
     }
 
     /**
-     * 把 Alist 文件路径换成可直接播放的音频直链。
+     * 把 Alist 文件路径换成可直接播放的音频地址。
+     *
+     * 优先使用 Alist 的固定下载路径 $SITE/d/<path>（每个路径段做 URL 编码）。
+     * 这是站点的稳定文件地址，不依赖 token、不会过期；
+     * 而 /api/fs/get 返回的 raw_url 可能指向 /p/ 之类的临时代理路径，掉签后无法播放。
      */
     fun getRawUrl(path: String): String {
         return try {
@@ -184,17 +188,34 @@ object AlistAITingShu : TingShu() {
         }
     }
 
+    /** 按 URL 规则编码路径（保留 / 分隔符），中文、空格、· 等都会被正确转义。 */
+    private fun encodePath(path: String): String {
+        return path.split("/").joinToString("/") { seg ->
+            java.net.URLEncoder.encode(seg, "UTF-8")
+                .replace("+", "%20")   // 空格应为 %20 而不是 +
+        }
+    }
+
+    /** 由 Alist 内部路径生成稳定的下载直链。 */
+    fun buildDownloadUrl(path: String): String {
+        return "$SITE/d/" + encodePath(path.trimStart('/'))
+    }
+
     private fun doGetRawUrl(path: String): String {
         val tk = ensureToken()
-        val url = "$API/fs/get"
         val body = """{"path":"$path","password":""}"""
-        val json = postJson(url, body, tk)
-        val data = json.getJSONObject("data")
-        return if (data.optString("raw_url", "").isNotEmpty()) {
-            data.getString("raw_url")
-        } else {
-            data.getString("url")
-        }
+        val json = postJson("$API/fs/get", body, tk)
+        val data = json.optJSONObject("data")
+            ?: return buildDownloadUrl(path)
+
+        // 优先 /api/fs/get 给出的 raw_url；缺失或非 http 时回退到固定 /d/ 路径
+        val raw = data.optString("raw_url", "")
+        if (raw.startsWith("http")) return raw
+
+        val url = data.optString("url", "")
+        if (url.startsWith("http")) return url
+
+        return buildDownloadUrl(path)
     }
 
     override fun getSourceId(): String {
@@ -322,20 +343,19 @@ object AlistAITingShu : TingShu() {
     /**
      * 排错：
      * 1. 若 App 里列表为空 / 401：多半是 ROOT_PATH 前缀问题。
-     *    先确认：浏览器打开 $SITE ，看地址栏里 URL 是否形如 .../alist/d/otterhub/...
-     *    如果路径里 /alist 之后就是 otterhub，说明 Alist 根就是 /alist，
-     *    则把 ROOT_PATH 改成 "/alist/otterhub/audio/有声书/AI有声书"。
-     * 2. 若音频播放失败：检查 getRawUrl 返回的 raw_url（对象存储直链）是否可直连；
-     *    若被防盗链拦截，可改用 url 字段（Alist 代理链接，带签名）并视情况在源上实现 AudioUrlExtraHeaders。
+     *    浏览器打开 $SITE，地址栏形如 .../alist/d/otterhub/... 时，
+     *    /alist 之后就是 Alist 根路径，故 ROOT_PATH 用 "/otterhub/..." 是正确的。
+     * 2. 播放地址：优先取 /api/fs/get 的 raw_url，失败则回退到固定下载路径
+     *    $SITE/d/<path>（已实测 206 + audio/mpeg）。
      */
 }
 
 /**
- * 自定义音频提取器：先把 Alist 文件 path 换成直链，再交给直链提取器播放。
+ * 自定义音频提取器：先把 Alist 文件 path 换成可播放地址，再交给直链提取器播放。
  */
 object AlistAudioExtractor : AudioUrlExtractor {
     override fun extract(url: String, autoPlay: Boolean, isCache: Boolean, isDebug: Boolean) {
-        val rawUrl = AlistAITingShu.getRawUrl(url)
-        AudioUrlDirectExtractor.extract(rawUrl, autoPlay, isCache, isDebug)
+        val playUrl = AlistAITingShu.getRawUrl(url)
+        AudioUrlDirectExtractor.extract(playUrl, autoPlay, isCache, isDebug)
     }
 }
