@@ -55,11 +55,11 @@ object AlistAITingShu : TingShu() {
         val url = "$API/auth/login"
         val body = """{"username":"$USERNAME","password":"$PASSWORD"}"""
         val (_, _, result) = Fuel.post(url)
-            .header("Content-Type", "application/json")
             // 关键：Fuel 的 body(String) 默认会把 Content-Type 覆盖成 text/plain，
             // 而 Alist(gin) 的 ShouldBindJSON 严格要求 application/json，否则返回 400。
-            // 故必须显式以 application/json 发送，且用 UTF-8 避免中文路径乱码。
-            .body(body.toByteArray(Charsets.UTF_8), "application/json")
+            // 故先写无类型的 byte[] body，再强制 Content-Type 为 application/json，并用 UTF-8。
+            .body(body.toByteArray(Charsets.UTF_8))
+            .header("Content-Type" to "application/json")
             .responseJson()
         val json = result.get().obj()
         token = json.getJSONObject("data").getString("token")
@@ -83,9 +83,9 @@ object AlistAITingShu : TingShu() {
         val url = "$API/fs/list"
         val body = """{"path":"$path","password":"","page":1,"per_page":$PER_PAGE,"refresh":false}"""
         val (_, _, result) = Fuel.post(url)
-            .header("Authorization", tk)
-            .header("Content-Type", "application/json")
-            .body(body.toByteArray(Charsets.UTF_8), "application/json")
+            .header("Authorization" to tk)
+            .body(body.toByteArray(Charsets.UTF_8))
+            .header("Content-Type" to "application/json")
             .responseJson()
         val json = result.get().obj()
         val arr = json.getJSONObject("data").getJSONArray("content")
@@ -122,9 +122,9 @@ object AlistAITingShu : TingShu() {
         val url = "$API/fs/get"
         val body = """{"path":"$path","password":""}"""
         val (_, _, result) = Fuel.post(url)
-            .header("Authorization", tk)
-            .header("Content-Type", "application/json")
-            .body(body.toByteArray(Charsets.UTF_8), "application/json")
+            .header("Authorization" to tk)
+            .body(body.toByteArray(Charsets.UTF_8))
+            .header("Content-Type" to "application/json")
             .responseJson()
         val json = result.get().obj()
         val data = json.getJSONObject("data")
